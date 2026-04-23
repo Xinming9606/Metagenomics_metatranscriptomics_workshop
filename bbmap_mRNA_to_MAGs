@@ -1,0 +1,81 @@
+#!/usr/bin/bash
+
+## Map the paired-end sequences to MAG contigs over different samples
+## Sizhong Yang
+
+eval "$(conda shell.bash hook)"
+mamba activate /home/ubuntu/conda/bbtools
+
+## File handels
+
+fp_mRNA="/home/ubuntu/workshop/metatranscript/raw"
+fp_contigs="/home/ubuntu/workshop/metagenome/genomes"
+
+cores=8
+java_mem=24
+
+## File handles
+
+sampList=$1
+wkdir=$2
+outDir=$3
+
+mkdir -p ${wkdir}
+mkdir -p ${wkdir}/${outDir}
+    
+## Mark the start time
+
+st=`date +%s`
+
+## S1, Concat all MAGs fasta into one file
+
+cat ${fp_contigs}/*.fasta > ${outDir}/all_genomes.fasta
+
+mkdir -p ${outDir}/alignments
+mkdir -p ${outDir}/logs
+mkdir -p ${outDir}/coverage
+    
+## ------------------------
+## S2, mapping with bbmap
+## ------------------------
+
+for sample in `cat ${sampList}`; do
+    ## map reads with bbwrap.sh (a wrapped version of bbmap.sh)
+    bbwrap.sh \
+        ref=${outDir}/all_genomes.fasta \
+        in1=${fp_mRNA}/${sample}_R1.fastq.gz \
+        in2=${fp_mRNA}/${sample}_R2.fastq.gz \
+        outm=${outDir}/alignments/${sample}.bam \
+        threads=${cores} \
+        -Xmx${java_mem}G nodisk \
+        2> ${outDir}/logs/mapping_${sample}.log
+    ## get coverage from bam
+    pileup.sh \
+        in=${outDir}/alignments/${sample}.bam \
+        covstats=${outDir}/coverage/coverage_${sample}.tsv \
+        concise=t threads=${cores} \
+        -Xmx${java_mem}G overwrite=t \
+        2> ${outDir}/logs/pileup_${sample}.log
+done;
+
+## Step3, combine individual coverage files
+
+python3 /home/ubuntu/workshop/scripts/combine_cov_mRNA_to_MAGs.py \
+    --filePathPattern "${outDir}/coverage/coverage_*.tsv" \
+    --output ${outDir}/cov_mRNA_to_MAGs_over_samples.tsv
+
+conda deactivate
+        
+## --------------------
+## Report running time
+## --------------------
+
+et=`date +%s`
+runTime=$( echo "($et - $st + 59)/60" | bc -l )
+
+echo -e "
+The whole flow duration: ${runTime%%.*} minutes.\n
+"
+## Remove unnecessary files
+
+rm ${outDir}/all_genomes.fasta
